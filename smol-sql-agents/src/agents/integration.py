@@ -13,7 +13,8 @@ class SQLAgentPipeline(BaseAgent):
     """Streamlined SQL agent pipeline with consistent dictionary structures."""
     
     def __init__(self, indexer_agent=None, database_tools=None, 
-                 shared_entity_agent=None, shared_business_agent=None, shared_nl2sql_agent=None):
+                 shared_entity_agent=None, shared_business_agent=None, shared_nl2sql_agent=None,
+                 shared_insight_agent=None):
         # Store dependencies
         self.indexer_agent = indexer_agent
         self.database_tools = database_tools
@@ -26,7 +27,12 @@ class SQLAgentPipeline(BaseAgent):
         )
         
         # Initialize agents
-        self._initialize_agents(shared_entity_agent, shared_business_agent, shared_nl2sql_agent)
+        self._initialize_agents(
+            shared_entity_agent,
+            shared_business_agent,
+            shared_nl2sql_agent,
+            shared_insight_agent,
+        )
     
     def _setup_agent_components(self):
         """Setup agent-specific components."""
@@ -42,12 +48,19 @@ class SQLAgentPipeline(BaseAgent):
         # generate_sql -> _generate_sql
         # format_final_response -> _format_final_response
     
-    def _initialize_agents(self, shared_entity_agent, shared_business_agent, shared_nl2sql_agent):
+    def _initialize_agents(
+        self,
+        shared_entity_agent,
+        shared_business_agent,
+        shared_nl2sql_agent,
+        shared_insight_agent,
+    ):
         """Initialize pipeline agents."""
         try:
             from .entity_recognition import EntityRecognitionAgent
             from .business import BusinessContextAgent
             from .nl2sql import NL2SQLAgent
+            from .insight import InsightAgent
         except ImportError as e:
             logger.error(f"Failed to import required agents: {e}")
             raise
@@ -56,6 +69,7 @@ class SQLAgentPipeline(BaseAgent):
         self.entity_agent = shared_entity_agent or EntityRecognitionAgent(self.indexer_agent)
         self.business_agent = shared_business_agent or BusinessContextAgent(self.indexer_agent)
         self.nl2sql_agent = shared_nl2sql_agent or NL2SQLAgent(self.database_tools)
+        self.insight_agent = shared_insight_agent or InsightAgent()
     
     def _execute_entity_recognition(self, user_query: str, user_intent: str) -> Dict[str, Any]:
         """Execute entity recognition step."""
@@ -158,8 +172,15 @@ class SQLAgentPipeline(BaseAgent):
         
         return sql_results
     
-    def _format_final_response(self, entity_results: Dict, business_context: Dict, sql_results: Dict) -> Dict[str, Any]:
+    def _format_final_response(
+        self,
+        user_query: str,
+        entity_results: Dict,
+        business_context: Dict,
+        sql_results: Dict,
+    ) -> Dict[str, Any]:
         """Format final response step."""
+        insight = self.insight_agent.propose_insight(user_query, sql_results)
         return {
             "success": True,
             "pipeline_summary": {
@@ -183,7 +204,8 @@ class SQLAgentPipeline(BaseAgent):
                 "answer": sql_results.get("answer", None),
                 "validation": sql_results.get("validation", {}),
                 "query_execution": sql_results.get("query_execution", {})
-            }
+            },
+            "insight": insight
         }
     
     def _default_business_context(self) -> Dict[str, Any]:
@@ -250,7 +272,9 @@ class SQLAgentPipeline(BaseAgent):
             return {"success": False, "error": "SQL generation failed", "step": "sql_generation"}
         
         # Step 4: Format Final Response
-        final_response = self._format_final_response(entity_results, business_context, sql_results)
+        final_response = self._format_final_response(
+            user_query, entity_results, business_context, sql_results
+        )
         
         logger.info("Pipeline completed successfully")
         return final_response

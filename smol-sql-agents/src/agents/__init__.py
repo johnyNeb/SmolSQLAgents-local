@@ -12,6 +12,7 @@ from .entity_recognition import EntityRecognitionAgent
 from .batch_manager import BatchIndexingManager
 from .business import BusinessContextAgent
 from .nl2sql import NL2SQLAgent
+from .insight import InsightAgent
 from .integration import SQLAgentPipeline
 
 __all__ = [
@@ -29,5 +30,6 @@ __all__ = [
     'BatchIndexingManager',
     'BusinessContextAgent',
     'NL2SQLAgent',
+    'InsightAgent',
     'SQLAgentPipeline'
 ]

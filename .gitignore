@@ -206,4 +206,6 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-*/node_modules/
+*/node_modules/xiyan-7b/ 
+xiyan-sql-7b.gguf 
+llama.cpp/ 

@@ -163,20 +163,12 @@ class NL2SQLAgent(BaseAgent, CachingMixin, ValidationMixin):
         The user is asking a discovery question about the database:
         "{user_query}"
 
-        Semantic search identified these tables as potentially relevant: {entity_list}
+        Semantic search has already identified these relevant tables: {entity_list}
 
-        Your job is to answer the question in plain English.
-
-        You can use these tools to investigate:
-        - get_all_tables_unified_tool() — returns a dict, use result["tables"] to get the list
-        - get_table_schema_unified_tool("table_name") — returns columns for a specific table
-
-        Because the second tool is very slow, call it only if columns are explicitly part of the question
-
-        Based on what you find, call final_answer("your plain English answer here").
-
-        Example answer format:
-        final_answer("The tables that contain duplicate address information are: dup_addresses (stores entity identities of duplicates), dups_paid_fullmatch_key (tracks duplicates by full match key for paid addresses), dups_paid_leading (identifies the leading record among duplicates).")
+        Answer in 2-3 sentences in plain English.
+        Do NOT write SQL. Do NOT write code.
+        Just describe what tables exist and what they contain.
+        Be direct and concise.
         """
 
     def _extract_discovery_answer(self, response) -> str:
@@ -196,56 +188,7 @@ class NL2SQLAgent(BaseAgent, CachingMixin, ValidationMixin):
         """Direct SQL generation bypassing CodeAgent, with agent fallback for discovery queries."""
         import openai
     
-        # Route discovery queries to CodeAgent
         route = self._route_query(user_query)
-
-        # if route == "agent":
-        #     print(f"🔍 Routing to agent for discovery query", flush=True)
-        #     prompt = self._build_discovery_prompt(user_query, entity_context)
-            
-        #     def run_agent():
-        #         response = self.agent.run(prompt)
-        #         return self._extract_discovery_answer(response)
-            
-        #     agent_answer = None
-        #     try:
-        #         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        #             future = executor.submit(run_agent)
-        #             agent_answer = future.result(timeout=60)
-        #             print(f"✅ Agent answered discovery query", flush=True)
-        #     except concurrent.futures.TimeoutError:
-        #         if future.done():
-        #             try:
-        #                 agent_answer = future.result()
-        #                 print(f"✅ Agent answered (just after timeout)", flush=True)
-        #             except:
-        #                 pass
-        #         if not agent_answer:
-        #             print(f"⏱️ Agent timed out, falling back to Groq", flush=True)
-        #     except Exception as e:
-        #         print(f"❌ Agent failed: {e}, falling back to Groq", flush=True)
-            
-        #     if not agent_answer:
-        #         import openai
-        #         client = openai.OpenAI(
-        #             api_key=os.getenv("OPENAI_API_KEY"),
-        #             base_url=os.getenv("OPENAI_API_BASE")
-        #         )
-        #         response = client.chat.completions.create(
-        #             model=os.getenv("GROQ_MODEL_SLOW", "openai/gpt-oss-120b"),
-        #             messages=[{"role": "user", "content": prompt}],
-        #             max_tokens=500,
-        #             tool_choice="none"
-        #         )
-        #         agent_answer = response.choices[0].message.content.strip()
-            
-        #     return {
-        #         "success": True,
-        #         "generated_sql": "",
-        #         "answer": agent_answer,
-        #         "is_discovery": True,
-        #         "query_execution": {"success": True, "total_rows": 0}
-        #     }
         if route == "agent":
             print(f"🔍 Routing to direct Groq for discovery query", flush=True)
             import openai
@@ -255,7 +198,7 @@ class NL2SQLAgent(BaseAgent, CachingMixin, ValidationMixin):
             )
             prompt = self._build_discovery_prompt(user_query, entity_context)  #model=os.getenv("GROQ_MODEL_FAST", "openai/gpt-oss-20b"),
             response = client.chat.completions.create(
-                model="qwen/qwen3.6-27b",
+                model=os.getenv("GROQ_MODEL_SLOW", "xiyan-sql"),
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=500
             )
@@ -290,7 +233,6 @@ class NL2SQLAgent(BaseAgent, CachingMixin, ValidationMixin):
                         model=model_name,
                         messages=[{"role": "user", "content": prompt}],
                         max_tokens=500,
-                        tool_choice="none"
                     )
                     
                     generated_sql = response.choices[0].message.content.strip()
@@ -310,8 +252,10 @@ class NL2SQLAgent(BaseAgent, CachingMixin, ValidationMixin):
                     if result.get("query_execution", {}).get("success"):
                         print(f"✅ Success with {model_name}", flush=True)
                         
-                        # Option A: ask versatile to judge if instant was used
-                        if model_name == os.getenv("GROQ_MODEL_FAST", "openai/gpt-oss-20b"):
+                        # Only judge if 0 rows returned — trust successful results with data
+                        rows = result.get("query_execution", {}).get("total_rows", 0)
+                        fast_model = os.getenv("GROQ_MODEL_FAST", "qwen2.5-coder:7b")
+                        if model_name == fast_model and rows == 0:
                             judged = self._judge_and_maybe_fix(
                                 user_query,
                                 generated_sql,
@@ -389,133 +333,9 @@ class NL2SQLAgent(BaseAgent, CachingMixin, ValidationMixin):
 
 
     
-    def generate_sql_optimized3(self, user_query: str, business_context: Dict, entity_context: Dict) -> Dict[str, Any]:
-        logger.info(f"Starting SQL generation for query: {user_query}")
-
-        try:
-            prompt = self._build_query_prompt(user_query, business_context, entity_context)
-
-            models_to_try = self._choose_model_order(user_query)
-            attempts = []
-
-            for model_name in models_to_try:
-                logger.info(f"Trying model: {model_name}")
-                attempts.append(model_name)
-
-                try:
-                    response = self._run_with_model(model_name, prompt)
-                    generated_sql = self._extract_sql_from_response(response)
-
-                    if not generated_sql:
-                        continue
-
-                    logger.info(f"Generated SQL with {model_name}: {generated_sql[:100]}")
-
-                    result = self._execute_parallel_validation(generated_sql, business_context)
-
-                    if result.get("query_execution", {}).get("success"):
-                        result["model_used"] = model_name
-                        result["attempts"] = attempts
-                        return result
-
-                    # ✅ retry fix (only for fast model)
-                    # ✅ retry with better model, up to 3 attempts
-                    if "8b" in model_name:
-                            slow_model = os.getenv("GROQ_MODEL_SLOW", "openai/gpt-oss-120b")
-                            for retry_attempt in range(3):
-                                print(f"🔄 Retry {retry_attempt + 1}/3 with {slow_model}", flush=True)
-                                retry_result = self._retry_sql_fix(
-                                    generated_sql,
-                                    result.get("query_execution", {}).get("error", ""),
-                                    business_context,
-                                    slow_model  # ← use slow model for retry
-                                )
-                                if retry_result.get("query_execution", {}).get("success"):
-                                    retry_result["model_used"] = slow_model + f"_retry_{retry_attempt + 1}"
-                                    retry_result["attempts"] = attempts
-                                    print(f"✅ Retry {retry_attempt + 1} succeeded with {slow_model}", flush=True)
-                                    return retry_result
-                                else:
-                                    # Update SQL for next retry with the latest failure
-                                    generated_sql = retry_result.get("generated_sql", generated_sql)
-                                    error = retry_result.get("query_execution", {}).get("error", "")
-                                    print(f"❌ Retry {retry_attempt + 1} failed, trying again...", flush=True)
-                            
-                            print(f"❌ All 3 retries failed with {slow_model}", flush=True)
-
-                    if retry_result.get("query_execution", {}).get("success"):
-                            retry_result["model_used"] = model_name + "_retry"
-                            retry_result["attempts"] = attempts
-                            return retry_result
-
-                except Exception as e:
-                    logger.error(f"Model {model_name} failed: {e}")
-
-            return {
-                "success": False,
-                "error": "All models failed",
-                "attempts": attempts
-            }
-
-        except Exception as e:
-            logger.error(f"SQL generation failed: {e}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
     
     
-    def generate_sql_optimized2(self, user_query: str, business_context: Dict, entity_context: Dict) -> Dict[str, Any]:
-        """Optimized SQL generation with parallel validation."""
-        logger.info(f"Starting SQL generation for query: {user_query}")
-        try:
-            if not isinstance(business_context, dict) or not isinstance(entity_context, dict):
-                logger.error("Business context and entity context must be dictionaries")
-                return {
-                    "success": False,
-                    "error": "Business context and entity context must be dictionaries",
-                    "generated_sql": "",
-                    "is_valid": False
-                }
-            
-            # Build prompt
-            prompt = self._build_query_prompt(user_query, business_context, entity_context)
-            logger.info(f"Built prompt for SQL generation")
-            
-            # Generate SQL
-            response = self.agent.run(prompt)
-            generated_sql = self._extract_sql_from_response(response)
-            logger.info(f"Extracted SQL: {generated_sql[:100]}...")
-            
-            if not generated_sql:
-                logger.error("No valid SQL generated")
-                return {
-                    "success": False,
-                    "error": "No valid SQL generated",
-                    "generated_sql": "",
-                    "is_valid": False
-                }
-            
-            # Check cache
-            cache_key = self._get_cache_key(f"{generated_sql}:{hash(str(business_context))}")
-            cached_validation = self._get_cached_result(cache_key)
-            
-            if cached_validation:
-                logger.info("Using cached validation results")
-                return self._format_response_with_cache(generated_sql, cached_validation)
-            
-            # Parallel validation and execution
-            logger.info("Starting parallel validation")
-            return self._execute_parallel_validation(generated_sql, business_context)
-            
-        except Exception as e:
-            logger.error(f"SQL generation failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "generated_sql": "",
-                "is_valid": False
-            }
+    
     
     def _execute_parallel_validation(self, sql: str, business_context: Dict) -> Dict[str, Any]:
         """Execute parallel validation and query execution."""
@@ -589,58 +409,7 @@ class NL2SQLAgent(BaseAgent, CachingMixin, ValidationMixin):
             "is_valid": cached_results.get("syntax_valid", False)
         }
     
-    # def _build_query_prompt3(self, user_query: str, business_context: Dict, entity_context: Dict) -> str:
-    #     """Build query prompt."""
-    #     business_instructions = business_context.get("business_instructions", [])
-        
-    #     # Get top 2 entities and fetch their schemas efficiently
-    #     entities = entity_context.get("entities", [])
-    #     schema_info = "No schema information available"
-        
-    #     if entities:
-    #         schema_parts = []
-    #         # depth = self._get_schema_depth(user_query) ----->the scaling of tables
-    #         # print(f"DEBUG schema depth: {depth} for query: {user_query}", flush=True)
-    #         # for top_entity in entities[:depth]:
-    #         for top_entity in entities[:2]:  # top 2 entities
-    #             try:
-    #                 schema_result = self.database_tools.get_table_schema_unified(top_entity)
-    #                 columns = [col['name'] for col in schema_result.get('columns', [])]
-    #                 schema_parts.append(f"{top_entity} columns: {', '.join(columns)}")
-    #             except Exception as e:
-    #                 logger.error(f"Failed to fetch schema for {top_entity}: {e}")
-    #         schema_info = "\n".join(schema_parts) if schema_parts else "No schema information available"
-        
-    #     business_context_str = ""
-    #     if business_instructions:
-    #         business_context_str = "Business context:\n"
-    #         for instruction in business_instructions[:3]:
-    #             business_context_str += f"- {instruction.get('instructions', '')}\n"
-        
-    #     return f"""
-    #         Generate Oracle SQL for the following request: {user_query}
-            
-    #         Most relevant table schemas:
-    #         {schema_info}
-            
-    #         {business_context_str}
-            
-    #         Instructions:
-    #         0. For simple queries write SQL directly using the schema above
-    #         1. Generate the Oracle SQL query and call final_answer() with it as a string
-    #         2. The database is Oracle - use Oracle syntax only
-    #         3. ALWAYS use final_answer("your sql here") - never write raw SQL outside final_answer()
-    #         4. Never use ```sql code blocks - write plain Python only
-  
-
-
-    #         IMPORTANT Oracle SQL rules:
-    #         - Use FETCH FIRST N ROWS ONLY instead of TOP N, when asked.
-    #         - Use SYSDATE instead of NOW() or GETDATE(), when asked.
-    #         - Don't use ISNULL(), unless asked.
-    #         - SYSDATE has no parentheses, never write SYSDATE()
-    #         - Never add WHERE conditions not explicitly asked for by the user
-    #         """
+    
     
     def _build_query_prompt(self, user_query: str, business_context: Dict, entity_context: Dict) -> str:
         """Build query prompt."""
@@ -652,17 +421,48 @@ class NL2SQLAgent(BaseAgent, CachingMixin, ValidationMixin):
         
         if entities:
             schema_parts = []
-            # depth = self._get_schema_depth(user_query) ----->the scaling of tables
-            # print(f"DEBUG schema depth: {depth} for query: {user_query}", flush=True)
-            # for top_entity in entities[:depth]:
-            for top_entity in entities[:2]:  # top 2 entities
+            for top_entity in entities[:2]:
                 try:
                     schema_result = self.database_tools.get_table_schema_unified(top_entity)
-                    columns = [col['name'] for col in schema_result.get('columns', [])]
-                    schema_parts.append(f"{top_entity} columns: {', '.join(columns)}")
+                    columns = schema_result.get('columns', [])
+                    
+                    # M-Schema format
+                    lines = [f"# Table: {top_entity}"]
+                    for col in columns:
+                        name = col.get('name', '')
+                        dtype = col.get('type', '')
+                        nullable = col.get('nullable', True)
+                        is_pk = col.get('primary_key', False)
+                        
+                        tags = []
+                        if is_pk:
+                            tags.append('PK')
+                        if not nullable:
+                            tags.append('NOT NULL')
+                        tag_str = ', '.join(tags)
+                        tag_str = f', {tag_str}' if tag_str else ''
+                        
+                        lines.append(f"  ({name}, {dtype}{tag_str})")
+                    
+                    schema_parts.append('\n'.join(lines))
                 except Exception as e:
                     logger.error(f"Failed to fetch schema for {top_entity}: {e}")
-            schema_info = "\n".join(schema_parts) if schema_parts else "No schema information available"
+            
+            # Add foreign keys from YAML business context if available
+            fk_lines = []
+            business_instructions = business_context.get("business_instructions", [])
+            for instruction in business_instructions:
+                concept = instruction.get("concept", "")
+                if "join" in concept.lower():
+                    instructions_text = instruction.get("instructions", "")
+                    for line in instructions_text.split('\n'):
+                        if '=' in line and ('identity' in line.lower() or 'key' in line.lower()):
+                            fk_lines.append(f"  {line.strip()}")
+            
+            if fk_lines:
+                schema_parts.append("[Foreign Keys]\n" + '\n'.join(fk_lines))
+            
+            schema_info = "\n\n".join(schema_parts) if schema_parts else "No schema information available"
         
         business_context_str = ""
         if business_instructions:
@@ -675,8 +475,8 @@ class NL2SQLAgent(BaseAgent, CachingMixin, ValidationMixin):
 
         return f"""
             Generate Oracle SQL for the following request: {user_query}
-            
-            Most relevant table schemas:
+    
+            Database schema (M-Schema format):
             {schema_info}
             
             {business_context_str}
@@ -687,51 +487,11 @@ class NL2SQLAgent(BaseAgent, CachingMixin, ValidationMixin):
             
             Return ONLY the SQL query, nothing else. No explanation, no markdown, no final_answer() wrapper.
             Write SQL as a single clean string.
+            Use foreign keys shown in the schema above for JOIN conditions.
             """   
 
 
-    # def _build_query_prompt2(self, user_query: str, business_context: Dict, entity_context: Dict) -> str:
-    #     print(f"DEBUG entity_context keys: {entity_context.keys()}", flush=True)
-    #     print(f"DEBUG entity_context: {entity_context}", flush=True)
-    #     """Build query prompt."""
-    #     schema_info = self._format_schema_info(entity_context.get("table_schemas", {}))
-    #     business_instructions = business_context.get("business_instructions", [])
-        
-    #     business_context_str = ""
-    #     if business_instructions:
-    #         business_context_str = "Business context:\n"
-    #         for instruction in business_instructions[:3]:  # Limit to top 3
-    #             business_context_str += f"- {instruction.get('instructions', '')}\n"
-        
-    #     return f"""
-    #     Generate Oracle SQL for the following request: {user_query}
-        
-    #     Available schema information:
-    #     {schema_info}
-        
-    #     {business_context_str}
-        
-    #     Instructions:
-    #     1. For simple queries, write the SQL directly without checking tables first
-    #     2. The database is Oracle - use Oracle syntax only
-    #     3. To get table list if needed: tables = get_all_tables_unified_tool()['tables']
-    #     4. Test using execute_query_and_return_results(query_string)
-    #     5. Call final_answer(sql_query_string) with ONLY the SQL string
-
-    #     Examples:
-    #     - final_answer("SELECT COUNT(*) FROM address")
-    #     - final_answer("SELECT table_name FROM all_tables")
-    #     - final_answer("SELECT * FROM address FETCH FIRST 10 ROWS ONLY")
-
-    #     IMPORTANT Oracle SQL rules:
-    #     - Use ALL_TABLES or USER_TABLES instead of INFORMATION_SCHEMA
-    #     - Use FETCH FIRST N ROWS ONLY instead of TOP N
-    #     - Use SYSDATE instead of NOW() or GETDATE()
-    #     - Use TRUNC(date) for date-only comparisons
-    #     - Never use square brackets for column names
-    #     - Use NVL() instead of ISNULL()
-    #     - For COUNT queries, just write SELECT COUNT(*) FROM tablename directly
-    #     """
+    
     
     def _format_schema_info(self, table_schemas: Dict) -> str:
         """Format schema information for prompt."""
@@ -1003,15 +763,21 @@ class NL2SQLAgent(BaseAgent, CachingMixin, ValidationMixin):
         sample = execution_result.get("sample_data", {}).get("sample_rows", [])
         sample_str = str(sample[:3]) if sample else "no rows returned"
         
+        execution_success = execution_result.get("success", False)
+        rows_returned = execution_result.get("total_rows", 0)
+
         judge_prompt = f"""
         Original question: "{user_query}"
         
         Generated SQL: {generated_sql}
         
+        Execution status: {"SUCCESS" if execution_success else "FAILED"}
+        Rows returned: {rows_returned}
         Sample results: {sample_str}
         
         Does this SQL fully and correctly answer the question?
-        Check: are all filters from the question present? Is the aggregation correct?
+        If execution succeeded and results look reasonable, reply CORRECT.
+        Only reply INCORRECT if the SQL is clearly wrong or missing filters.
         
         Reply with either:
         - CORRECT
@@ -1027,8 +793,7 @@ class NL2SQLAgent(BaseAgent, CachingMixin, ValidationMixin):
             response = client.chat.completions.create(
                 model=slow,
                 messages=[{"role": "user", "content": judge_prompt}],
-                max_tokens=300,
-                tool_choice="none"
+                max_tokens=300
             )
             
             verdict = response.choices[0].message.content.strip()
