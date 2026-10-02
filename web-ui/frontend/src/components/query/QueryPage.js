@@ -21,10 +21,12 @@ const QueryPage = ({
   copySqlToClipboard,
   queryExecution,
   optimizationSuggestions,
-  results
+  results,
+  insight
 }) => {
   console.log('QueryPage - results prop:', results);
   console.log('QueryPage - queryExecution prop:', queryExecution);
+  console.log('QueryPage - insight prop:', insight);
   return (
     <>
       {/* SQL Agent Status */}
@@ -55,6 +57,24 @@ const QueryPage = ({
 
       {/* Query Results */}
       <QueryResults queryExecution={queryExecution} results={results} />
+
+      {/* Insight */}
+      {insight && insight.success && (
+        <div className="card mb-3 border-info">
+          <div className="card-header bg-info bg-opacity-10">
+            <h5 className="mb-0 text-info">
+              <i className="bi bi-lightbulb me-2"></i>Insight
+            </h5>
+          </div>
+          <div className="card-body">
+            <p className="mb-2">{insight.insight}</p>
+            <div className="text-muted small">
+              <i className="bi bi-arrow-right-circle me-1"></i>
+              <strong>Follow-up:</strong> {insight.follow_up_question}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Optimization Suggestions */}
       <OptimizationSuggestions optimizationSuggestions={optimizationSuggestions} />

@@ -29,6 +29,7 @@ function App() {
   const [sqlValidation, setSqlValidation] = useState(null);
   const [optimizationSuggestions, setOptimizationSuggestions] = useState([]);
   const [queryExecution, setQueryExecution] = useState(null);
+  const [insight, setInsight] = useState(null);
 
   // Splash screen state
   const [showSplash, setShowSplash] = useState(true);
@@ -236,6 +237,7 @@ function App() {
     setSqlValidation(null);
     setOptimizationSuggestions([]);
     setQueryExecution(null);
+    setInsight(null);
 
     try {
       console.log('Making API call to /api/query with query:', query.trim());
@@ -275,7 +277,11 @@ function App() {
       // Extract comprehensive pipeline results if available
       if (data.pipeline_results) {
         setPipelineResults(data.pipeline_results);
-
+        if (data.pipeline_results.insight) {
+            setInsight(data.pipeline_results.insight);
+        } else {
+            setInsight(null);
+        }
         // Extract entity recognition results
         const entityRecognition = data.pipeline_results.entity_recognition;
         if (entityRecognition) {
@@ -464,6 +470,7 @@ function App() {
                 queryExecution={queryExecution}
                 optimizationSuggestions={optimizationSuggestions}
                 results={results}
+                insight={insight}
               />
             )}
 
