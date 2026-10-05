@@ -704,56 +704,57 @@ class ApiRoutes:
         logger.info("get_all_summaries endpoint called.")
         
         try:
-            store = self.get_documentation_store()
+            from src.vector.store import SQLVectorStore
+            vector_store = SQLVectorStore()
+            vector_store.create_table_index()
+            vector_store.create_relationship_index()
             
-            # Get all tables and their documentation
-            all_tables = store.get_all_tables()
+            # Get tables from ChromaDB
+            table_results = vector_store.search_tables("database table records data information", 200)
             table_summaries = {}
-            
-            for table_name in all_tables:
-                table_info = store.get_table_info(table_name)
-                if table_info:
-                    table_summaries[table_name] = {
-                        "id": f"table_{table_name}",
+            for r in table_results:
+                content = r.get("content", {})
+                name = content.get("name", "")
+                if name:
+                    table_summaries[f"table_{name}"] = {
+                        "id": f"table_{name}",
                         "type": "table",
-                        "name": table_name,
-                        "business_purpose": table_info["business_purpose"],
-                        "documentation": table_info["documentation"],
-                        "status": table_info["status"],
-                        "processed_at": table_info.get("processed_at")
+                        "name": name,
+                        "business_purpose": content.get("business_purpose", ""),
+                        "documentation": content.get("description", ""),
+                        "status": "completed",
+                        "processed_at": None
                     }
             
-            # Get all relationships and their documentation
-            all_relationships = store.get_all_relationships()
+            # Get relationships from live database
+            from src.database.inspector import DatabaseInspector
+            inspector = DatabaseInspector()
+            relationships = inspector.get_all_foreign_key_relationships()
             relationship_summaries = {}
+            for rel in relationships:
+                rel_id = f"{rel['constrained_table']}_to_{rel['referred_table']}"
+                relationship_summaries[rel_id] = {
+                    "id": f"relationship_{rel_id}",
+                    "type": "relationship",
+                    "name": rel_id,
+                    "relationship_type": "foreign_key",
+                    "documentation": f"{rel['constrained_table']}.{rel['constrained_columns']} → {rel['referred_table']}.{rel['referred_columns']}",
+                    "status": "completed",
+                    "constrained_table": rel["constrained_table"],
+                    "referred_table": rel["referred_table"]
+                }
             
-            for relationship in all_relationships:
-                rel_info = store.get_relationship_info(str(relationship['id']))
-                if rel_info:
-                    relationship_summaries[str(relationship['id'])] = {
-                        "id": f"relationship_{relationship['id']}",
-                        "type": "relationship",
-                        "name": f"{relationship['constrained_table']}_to_{relationship['referred_table']}",
-                        "relationship_type": rel_info["relationship_type"],
-                        "documentation": rel_info["documentation"],
-                        "status": rel_info["status"],
-                        "constrained_table": relationship["constrained_table"],
-                        "referred_table": relationship["referred_table"]
-                    }
-            
-            # Combine all summaries
             all_summaries = {**table_summaries, **relationship_summaries}
             
-            # Calculate statistics
             statistics = {
                 "total_items": len(all_summaries),
                 "tables": {
                     "total": len(table_summaries),
-                    "completed": len([t for t in table_summaries.values() if t["status"] == "completed"])
+                    "completed": len(table_summaries)
                 },
                 "relationships": {
                     "total": len(relationship_summaries),
-                    "completed": len([r for r in relationship_summaries.values() if r["status"] == "completed"])
+                    "completed": len(relationship_summaries)
                 }
             }
             
@@ -865,162 +866,105 @@ class ApiRoutes:
             }), 500
 
     def get_all_table_documentation(self):
-        """Get all table documentation."""
-        start_time = time.perf_counter()
-        logger.info("get_all_table_documentation endpoint called.")
-        
+        """Get all table documentation from ChromaDB."""
         try:
-            store = self.get_documentation_store()
-            all_tables = store.get_all_tables()
+            from src.vector.store import SQLVectorStore
+            store = SQLVectorStore()
+            store.create_table_index()
+            results = store.search_tables("database table records data information", n_results=200)
             
-            table_documentation = {}
-            for table_name in all_tables:
-                table_info = store.get_table_info(table_name)
-                if table_info:
-                    table_documentation[table_name] = {
-                        "table_name": table_name,
-                        "business_purpose": table_info["business_purpose"],
-                        "documentation": table_info["documentation"],
-                        "schema_data": table_info["schema_data"],
-                        "status": table_info["status"],
-                        "processed_at": table_info.get("processed_at")
-                    }
-            
-            elapsed = time.perf_counter() - start_time
-            logger.info(f"get_all_table_documentation total execution time: {elapsed:.4f} seconds")
+            docs = []
+            for r in results.get("tables", []):
+                content = r.get("content", {})
+                docs.append({
+                    "table_name": content.get("name", ""),
+                    "business_purpose": content.get("business_purpose", ""),
+                    "description": content.get("description", ""),
+                    "columns": content.get("columns", "")
+                })
             
             return jsonify({
                 "success": True,
-                "tables": table_documentation,
-                "total_tables": len(table_documentation)
+                "tables": docs,
+                "total": len(docs)
             })
-            
         except Exception as e:
-            elapsed = time.perf_counter() - start_time
-            logger.error(f"get_all_table_documentation failed after {elapsed:.4f} seconds: {e}", exc_info=True)
-            return jsonify({
-                "success": False,
-                "error": str(e),
-                "tables": {},
-                "total_tables": 0
-            }), 500
-
-    def get_table_documentation(self, table_name):
-        """Get documentation for a specific table."""
-        start_time = time.perf_counter()
-        logger.info(f"get_table_documentation endpoint called for table: {table_name}")
+            logger.error(f"Failed to get table documentation: {e}")
+            return jsonify({"success": False, "error": str(e), "tables": []}), 500
         
+    def get_table_documentation(self, table_name):
+        """Get documentation for a specific table from ChromaDB."""
         try:
-            store = self.get_documentation_store()
-            table_info = store.get_table_info(table_name)
+            from src.vector.store import SQLVectorStore
+            store = SQLVectorStore()
+            store.create_table_index()
+            results = store.search_tables(table_name, 10)
             
-            if table_info:
-                elapsed = time.perf_counter() - start_time
-                logger.info(f"get_table_documentation total execution time: {elapsed:.4f} seconds")
-                
-                return jsonify({
-                    "success": True,
-                    "table": {
+            # Find exact match
+            for r in results:
+                content = r.get("content", {})
+                if content.get("name") == table_name:
+                    return jsonify({
+                        "success": True,
                         "table_name": table_name,
-                        "business_purpose": table_info["business_purpose"],
-                        "documentation": table_info["documentation"],
-                        "schema_data": table_info["schema_data"],
-                        "status": table_info["status"],
-                        "processed_at": table_info.get("processed_at")
-                    }
-                })
-            else:
-                return jsonify({
-                    "success": False,
-                    "error": f"Table '{table_name}' not found"
-                }), 404
-                
-        except Exception as e:
-            elapsed = time.perf_counter() - start_time
-            logger.error(f"get_table_documentation failed after {elapsed:.4f} seconds: {e}", exc_info=True)
+                        "business_purpose": content.get("business_purpose", ""),
+                        "description": content.get("description", ""),
+                        "columns": content.get("columns", ""),
+                        "schema_data": content.get("schema_data", {})
+                    })
+            
             return jsonify({
                 "success": False,
-                "error": str(e)
-            }), 500
+                "error": f"Table {table_name} not found"
+            }), 404
+            
+        except Exception as e:
+            logger.error(f"Failed to get table documentation for {table_name}: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
 
     def get_all_relationship_documentation(self):
-        """Get all relationship documentation."""
-        start_time = time.perf_counter()
-        logger.info("get_all_relationship_documentation endpoint called.")
-        
+        """Get all relationship documentation from live database."""
         try:
-            store = self.get_documentation_store()
-            all_relationships = store.get_all_relationships()
-            
-            relationship_documentation = {}
-            for relationship in all_relationships:
-                rel_info = store.get_relationship_info(str(relationship['id']))
-                if rel_info:
-                    relationship_documentation[str(relationship['id'])] = {
-                        "id": relationship['id'],
-                        "constrained_table": relationship["constrained_table"],
-                        "referred_table": relationship["referred_table"],
-                        "constrained_columns": relationship["constrained_columns"],
-                        "referred_columns": relationship["referred_columns"],
-                        "relationship_type": rel_info["relationship_type"],
-                        "documentation": rel_info["documentation"],
-                        "status": rel_info["status"],
-                        "processed_at": rel_info.get("processed_at")
-                    }
-            
-            elapsed = time.perf_counter() - start_time
-            logger.info(f"get_all_relationship_documentation total execution time: {elapsed:.4f} seconds")
+            from src.database.inspector import DatabaseInspector
+            inspector = DatabaseInspector()
+            relationships = inspector.get_all_foreign_key_relationships()
             
             return jsonify({
                 "success": True,
-                "relationships": relationship_documentation,
-                "total_relationships": len(relationship_documentation)
+                "relationships": relationships,
+                "total": len(relationships)
             })
-            
         except Exception as e:
-            elapsed = time.perf_counter() - start_time
-            logger.error(f"get_all_relationship_documentation failed after {elapsed:.4f} seconds: {e}", exc_info=True)
-            return jsonify({
-                "success": False,
-                "error": str(e),
-                "relationships": {},
-                "total_relationships": 0
-            }), 500
+            logger.error(f"Failed to get relationships: {e}")
+            return jsonify({"success": False, "error": str(e), "relationships": []}), 500
 
     def get_relationship_documentation(self, relationship_id):
-        """Get documentation for a specific relationship."""
+        """Get documentation for a specific relationship from live database."""
         start_time = time.perf_counter()
         logger.info(f"get_relationship_documentation endpoint called for relationship: {relationship_id}")
         
         try:
-            store = self.get_documentation_store()
-            all_relationships = store.get_all_relationships()
+            from src.database.inspector import DatabaseInspector
+            inspector = DatabaseInspector()
+            relationships = inspector.get_all_foreign_key_relationships()
             
-            # Find the target relationship
-            target_relationship = None
-            for rel in all_relationships:
-                if str(rel['id']) == relationship_id:
-                    target_relationship = rel
-                    break
-            
-            if target_relationship:
-                rel_info = store.get_relationship_info(relationship_id)
-                if rel_info:
+            # relationship_id format is "constrained_table_to_referred_table"
+            for rel in relationships:
+                rel_id = f"{rel['constrained_table']}_to_{rel['referred_table']}"
+                if rel_id == relationship_id:
                     elapsed = time.perf_counter() - start_time
-                    logger.info(f"get_relationship_documentation total execution time: {elapsed:.4f} seconds")
-                    
                     return jsonify({
                         "success": True,
                         "relationship": {
                             "id": relationship_id,
-                            "constrained_table": target_relationship["constrained_table"],
-                            "referred_table": target_relationship["referred_table"],
-                            "constrained_columns": target_relationship["constrained_columns"],
-                            "referred_columns": target_relationship["referred_columns"],
-                            "relationship_type": rel_info["relationship_type"],
-                            "documentation": rel_info["documentation"],
-                            "status": rel_info["status"],
-                            "processed_at": rel_info.get("processed_at")
+                            "constrained_table": rel["constrained_table"],
+                            "referred_table": rel["referred_table"],
+                            "constrained_columns": rel["constrained_columns"],
+                            "referred_columns": rel["referred_columns"],
+                            "relationship_type": "foreign_key",
+                            "documentation": f"{rel['constrained_table']}.{rel['constrained_columns']} → {rel['referred_table']}.{rel['referred_columns']}",
+                            "status": "completed",
+                            "processed_at": None
                         }
                     })
             

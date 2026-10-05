@@ -3,6 +3,7 @@
 from typing import Dict, List, Optional, Protocol, Any
 import os
 import json
+import hashlib
 import logging
 import chromadb
 from pathlib import Path
@@ -168,23 +169,30 @@ class SQLVectorStore:
     """Manages vector indexes using OpenAI embeddings with ChromaDB persistence."""
     
     def __init__(self, base_path: str = "__bin__/data/vector_indexes", vector_index_factory: Any = None):
-        """Initialize vector store with base path for indexes.
+            self.base_path = base_path
+            
+            # Create database-specific namespace from DATABASE_URL
+            db_url = os.getenv("DATABASE_URL", "default")
+            self.db_namespace = hashlib.md5(db_url.encode()).hexdigest()[:8]
+            logger.info(f"Vector store namespace: {self.db_namespace} for DB: {db_url[:50]}")
+            
+            self.embeddings_client = OpenAIEmbeddingsClient()
+            self.vector_index_factory = vector_index_factory or self._default_index_factory
+            self.table_index = None
+            self.relationship_index = None
+            self._ensure_directories()
         
-        Args:
-            base_path (str): Base directory for storing vector indexes
-            vector_index_factory: Factory function to create vector indexes
-        """
-        self.base_path = base_path
-        self.embeddings_client = OpenAIEmbeddingsClient()
-        self.vector_index_factory = vector_index_factory or self._default_index_factory
-        self.table_index = None     # vector index instance for tables
-        self.relationship_index = None  # vector index instance for relationships
-        self._ensure_directories()
-        
-    def _default_index_factory(self, path: str) -> VectorIndex:
-        """Create default vector index implementation using ChromaDB."""
+    #def _default_index_factory(self, path: str) -> VectorIndex:
+    #    """Create default vector index implementation using ChromaDB."""
         # Extract collection name from path
-        collection_name = os.path.basename(path).replace('.db', '')
+    #    collection_name = os.path.basename(path).replace('.db', '')
+    #    return ChromaDBIndex(collection_name=collection_name, persist_directory=self.base_path)
+
+    def _default_index_factory(self, path: str, collection_name: str = None) -> VectorIndex:
+        """Create default vector index implementation using ChromaDB."""
+        if collection_name is None:
+            # Fall back to extracting from path
+            collection_name = os.path.basename(path).replace('.db', '')
         return ChromaDBIndex(collection_name=collection_name, persist_directory=self.base_path)
         
     def create_table_index(self, index_name: str = "tables"):
@@ -196,8 +204,11 @@ class SQLVectorStore:
         Returns:
             None
         """
-        index_path = os.path.join(self.base_path, "tables", f"{index_name}.db")
-        self.table_index = self.vector_index_factory(index_path)
+        index_path = os.path.join(self.base_path, "tables")
+        namespaced_name = f"{self.db_namespace}_{index_name}"
+        self.table_index = self.vector_index_factory(index_path, namespaced_name)
+        #index_path = os.path.join(self.base_path, "tables", f"{self.db_namespace}_{index_name}.db")
+        #self.table_index = self.vector_index_factory(index_path)
         
     def create_relationship_index(self, index_name: str = "relationships"):
         """Create vector index for relationship documentation.
@@ -208,8 +219,11 @@ class SQLVectorStore:
         Returns:
             None
         """
-        index_path = os.path.join(self.base_path, "relationships", f"{index_name}.db")
-        self.relationship_index = self.vector_index_factory(index_path)
+        index_path = os.path.join(self.base_path, "relationships")
+        namespaced_name = f"{self.db_namespace}_{index_name}"
+        self.relationship_index = self.vector_index_factory(index_path, namespaced_name)        
+        #index_path = os.path.join(self.base_path, "relationships", f"{self.db_namespace}_{index_name}.db")
+        #self.relationship_index = self.vector_index_factory(index_path)
         
     def add_table_document(self, table_name: str, content: Dict):
         """Add table documentation with OpenAI-generated embedding.
