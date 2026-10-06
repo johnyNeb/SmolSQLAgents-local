@@ -1,0 +1,14 @@
+concepts:
+  - name: "address_joins"
+    description: "Foreign key relationships for joining address to related tables"
+    required_joins: []
+    target:
+      - "address"
+      - "address_relation"
+      - "address_attribute"
+    instructions: |
+      address joins to related tables as follows:
+      address to address_relation: address_relation.source_identity = address.entity_identity
+      address to address_attribute: address_attribute.parent_identity = address.entity_identity
+      NEVER join on entity_identity = entity_identity between any two tables
+      The paid column exists only on the address table, not on address_relation

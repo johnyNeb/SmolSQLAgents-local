@@ -184,6 +184,21 @@ class NL2SQLAgent(BaseAgent, CachingMixin, ValidationMixin):
             return response.strip()
         return str(response)    
 
+    def _get_db_dialect(self) -> str:
+        """Detect database dialect from DATABASE_URL."""
+        db_url = os.getenv("DATABASE_URL", "")
+        if "oracle" in db_url.lower():
+            return "oracle"
+        elif "sqlite" in db_url.lower():
+            return "sqlite"
+        elif "postgresql" in db_url.lower():
+            return "postgresql"
+        elif "mysql" in db_url.lower():
+            return "mysql"
+        else:
+            return "unknown"
+
+
     def generate_sql_optimized(self, user_query: str, business_context: Dict, entity_context: Dict) -> Dict[str, Any]:
         """Direct SQL generation bypassing CodeAgent, with agent fallback for discovery queries."""
         import openai
@@ -472,23 +487,38 @@ class NL2SQLAgent(BaseAgent, CachingMixin, ValidationMixin):
 
         feedback_examples = self._get_feedback_examples(user_query)
         lessons = self._load_lessons()
+        dialect = self._get_db_dialect()
+        if dialect == "oracle":
+            sql_rules = """- Use FETCH FIRST N ROWS ONLY instead of TOP N
+                - Use SYSDATE instead of NOW() or GETDATE()
+                - Use NVL() instead of ISNULL()
+                - SYSDATE has no parentheses, never write SYSDATE()
+                - Never add WHERE conditions not explicitly asked for by the user
+                - Write SQL as a single clean string"""
+        else:  # sqlite, postgresql, mysql, unknown
+            sql_rules = """- Use LIMIT N instead of FETCH FIRST N ROWS ONLY or TOP N
+                - Use date('now') instead of SYSDATE
+                - Use COALESCE() instead of NVL()
+                - Never add WHERE conditions not explicitly asked for by the user
+                - Write SQL as a single clean string"""
 
+        
         return f"""
-            Generate Oracle SQL for the following request: {user_query}
-    
+            Generate {dialect.upper()} SQL for the following request: {user_query}
+            
             Database schema (M-Schema format):
             {schema_info}
             
             {business_context_str}
-
             {feedback_examples}
-            
             {lessons}
             
             Return ONLY the SQL query, nothing else. No explanation, no markdown, no final_answer() wrapper.
-            Write SQL as a single clean string.
             Use foreign keys shown in the schema above for JOIN conditions.
-            """   
+            
+            IMPORTANT {dialect.upper()} SQL rules:
+            {sql_rules}
+            """
 
 
     
@@ -758,7 +788,11 @@ class NL2SQLAgent(BaseAgent, CachingMixin, ValidationMixin):
         """Ask versatile to judge if instant's SQL actually answers the question."""
         import openai
         
-        slow = os.getenv("GROQ_MODEL_SLOW", "openai/gpt-oss-120b")
+        dialect = self._get_db_dialect()
+        if dialect == "oracle":
+            slow = os.getenv("GROQ_MODEL_SLOW", "qwen2.5-coder:14b")
+        else:
+            slow = "xiyan-sql"  # XiYanSQL is better for SQLite/standard SQL
         
         sample = execution_result.get("sample_data", {}).get("sample_rows", [])
         sample_str = str(sample[:3]) if sample else "no rows returned"

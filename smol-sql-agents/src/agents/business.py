@@ -18,15 +18,16 @@ class BusinessContextAgent(BaseAgent):
     """Streamlined business context agent with consistent dictionary returns."""
     
     def __init__(self, indexer_agent=None, concepts_dir: str = "src/agents/concepts", 
-                 shared_llm_model=None, shared_concept_loader=None, shared_concept_matcher=None,
-                 database_tools=None):
+                shared_llm_model=None, shared_concept_loader=None, shared_concept_matcher=None,
+                database_tools=None):
         self.indexer_agent = indexer_agent
+        self.concepts_dir = concepts_dir
         
-        # Use shared components if provided
-        self.concept_loader = shared_concept_loader or ConceptLoader(concepts_dir)
+        # Use dialect-specific concepts directory
+        dialect_dir = BusinessContextAgent._get_concepts_dir_static(concepts_dir)
+        self.concept_loader = shared_concept_loader or ConceptLoader(dialect_dir)
         self.concept_matcher = shared_concept_matcher or ConceptMatcher(indexer_agent)
         
-        # Initialize base agent with unified database tools
         super().__init__(
             shared_llm_model=shared_llm_model,
             additional_imports=['yaml', 'json'],
@@ -35,6 +36,22 @@ class BusinessContextAgent(BaseAgent):
         )
         
         logger.info("Business Context Agent initialized")
+
+    @staticmethod
+    def _get_concepts_dir_static(concepts_dir: str) -> str:
+        """Get dialect-specific concepts directory."""
+        import os
+        db_url = os.getenv("DATABASE_URL", "")
+        if "oracle" in db_url.lower():
+            dialect_dir = os.path.join(concepts_dir, "oracle")
+        elif "sqlite" in db_url.lower():
+            dialect_dir = os.path.join(concepts_dir, "sqlite")
+        else:
+            return concepts_dir
+        
+        if os.path.exists(dialect_dir):
+            return dialect_dir
+        return concepts_dir
 
     def _setup_agent_components(self):
         """Setup agent-specific components."""

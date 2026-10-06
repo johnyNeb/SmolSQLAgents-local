@@ -163,10 +163,16 @@ class DatabaseTools:
                 #         after_select = query[select_index + 6:].lstrip()
                 #         query = query[:select_index + 6] + f" TOP {max_rows} " + after_select
                 # Add row limiting for safety (Oracle syntax)
-                if "FETCH FIRST" not in query.upper() and "ROWNUM" not in query.upper() and "SELECT" in query.upper():
-                    # Skip adding limit for aggregate queries like COUNT(*)
-                    if "COUNT(" not in query.upper():
-                        query = query + f" FETCH FIRST {max_rows} ROWS ONLY"
+                import os
+                db_url = os.getenv("DATABASE_URL", "")
+
+                if "SELECT" in query.upper() and "COUNT(" not in query.upper():
+                    if "sqlite" in db_url.lower():
+                        if "LIMIT" not in query.upper():
+                            query = query + f" LIMIT {max_rows}"
+                    elif "oracle" in db_url.lower():
+                        if "FETCH FIRST" not in query.upper() and "ROWNUM" not in query.upper():
+                            query = query + f" FETCH FIRST {max_rows} ROWS ONLY"
                 query = query.strip().rstrip(';')
                 result = connection.execute(text(query))
                 rows = result.fetchall()

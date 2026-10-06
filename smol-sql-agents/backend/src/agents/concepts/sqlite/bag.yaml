@@ -1,0 +1,17 @@
+concepts:
+  - name: "bag_address_lookup"
+    description: "Looking up addresses and buildings in the BAG dataset"
+    required_joins: []
+    target:
+      - "verblijfsobject"
+      - "woonplaats"
+      - "pand"
+      - "standplaats"
+    instructions: |
+      BAG tables and their relationships:
+      verblijfsobject joins to pand using: pand.identificatie = verblijfsobject.pandidentificatie
+      verblijfsobject contains address objects like apartments and buildings
+      woonplaats contains city/town names
+      pand contains building information
+      Use LIMIT N for row limiting, never FETCH FIRST
+      Use date('now') for current date
