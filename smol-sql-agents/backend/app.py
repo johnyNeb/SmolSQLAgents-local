@@ -893,30 +893,41 @@ class ApiRoutes:
             return jsonify({"success": False, "error": str(e), "tables": []}), 500
         
     def get_table_documentation(self, table_name):
-        """Get documentation for a specific table from ChromaDB."""
+        """Get documentation for a specific table."""
         try:
             from src.vector.store import SQLVectorStore
+            from src.database.inspector import DatabaseInspector
+            
+            # Get business purpose from ChromaDB
             store = SQLVectorStore()
             store.create_table_index()
             results = store.search_tables(table_name, 10)
             
-            # Find exact match
+            business_purpose = ""
+            description = ""
             for r in results:
                 content = r.get("content", {})
                 if content.get("name") == table_name:
-                    return jsonify({
-                        "success": True,
-                        "table_name": table_name,
-                        "business_purpose": content.get("business_purpose", ""),
-                        "description": content.get("description", ""),
-                        "columns": content.get("columns", ""),
-                        "schema_data": content.get("schema_data", {})
-                    })
+                    business_purpose = content.get("business_purpose", "")
+                    description = content.get("description", "")
+                    break
+            
+            # Get live schema from database
+            inspector = DatabaseInspector()
+            live_schema = inspector.get_table_schema(table_name)
             
             return jsonify({
-                "success": False,
-                "error": f"Table {table_name} not found"
-            }), 404
+                "success": True,
+                "table": {
+                    "table_name": table_name,
+                    "name": table_name,
+                    "business_purpose": business_purpose,
+                    "documentation": description,
+                    "columns": live_schema.get("columns", []),
+                    "schema_data": live_schema,
+                    "schema": live_schema
+                }
+            })
             
         except Exception as e:
             logger.error(f"Failed to get table documentation for {table_name}: {e}")
