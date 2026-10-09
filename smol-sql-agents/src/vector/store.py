@@ -280,6 +280,18 @@ class SQLVectorStore:
             metadata=metadata
         )
         self.relationship_index.save()
+    def get_all_tables(self, max_results: int = 500) -> list:
+        """Get all indexed table documents."""
+        try:
+            results = self.table_index.collection.get(limit=max_results)
+            documents = []
+            for i, doc_id in enumerate(results['ids']):
+                metadata = results['metadatas'][i] if results['metadatas'] else {}
+                documents.append({"content": metadata, "id": doc_id})
+            return documents
+        except Exception as e:
+            logger.error(f"Failed to get all tables: {e}")
+            return []
         
     def search_tables(self, query: str, limit: int = 5) -> List[Dict]:
         """Search table documentation using OpenAI query embedding.

@@ -161,7 +161,9 @@ const DocumentationExplorer = ({
   // Calculate statistics
   const totalTables = documentationData.tables.length;
   const totalRelationships = documentationData.relationships.length;
+  const tablesWithoutDocumentation = documentationData.tables.filter(t => !t.business_purpose).map(t => t.name).join(', ');
   const tablesWithDocumentation = documentationData.tables.filter(t => t.business_purpose).length;
+  console.log('DEBUG tables without business_purpose:', documentationData.tables.filter(t => !t.business_purpose).map(t => t.name));
   const relationshipsWithDocumentation = documentationData.relationships.filter(r => r.documentation).length;
   const totalColumns = documentationData.tables.reduce((sum, table) => {
     const cols = table.columns || table.schema_data?.columns || [];
@@ -247,10 +249,10 @@ const DocumentationExplorer = ({
               </div>
             </div>
             <div className="col-6">
-              <div className="stat-item">
-                <div className="stat-number">{tablesWithDocumentation}</div>
-                <div className="stat-label">Documented</div>
-              </div>
+                <div className="stat-item" title={`Missing: ${tablesWithoutDocumentation}`}>
+                    <div className="stat-number">{tablesWithDocumentation}</div>
+                    <div className="stat-label">Documented</div>
+                </div>
             </div>
           </div>
         </div>

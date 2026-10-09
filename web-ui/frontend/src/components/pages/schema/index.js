@@ -33,7 +33,7 @@ const SchemaPage = () => {
       setIsLoading(true);
       try {
         const [schemaResponse, docResponse, relResponse] = await Promise.all([
-          fetch('http://127.0.0.1:5000/api/schema'),
+          fetch('http://127.0.0.1:5000/api/schema/full'),
           fetch('http://127.0.0.1:5000/api/documentation/summaries'),
           fetch('http://127.0.0.1:5000/api/documentation/relationships')
         ]);
@@ -42,10 +42,10 @@ const SchemaPage = () => {
         let relationships = [];
 
         if (schemaResponse.ok) {
-          const data = await schemaResponse.json();
-          if (data.success) {
-            tables = data.tables || [];
-          }
+            const data = await schemaResponse.json();
+            if (data.success) {
+                tables = data.tables || [];
+            }
         }
 
         // Enrich tables with column data from documentation store
@@ -61,26 +61,37 @@ const SchemaPage = () => {
                 console.log('sample table:', tables[0]);
 
                 // Fetch full table docs including schema_data
-                tables = await Promise.all(tables.map(async table => {
+                //tables = await Promise.all(tables.map(async table => {
+                //    const doc = docMap[table.name];
+                //    if (doc) {
+                //        try {
+                //            const tableDocResponse = await fetch(`http://127.0.0.1:5000/api/documentation/tables/${table.name}`);
+                //            if (tableDocResponse.ok) {
+                //                const tableDocData = await tableDocResponse.json();
+                //                if (tableDocData.success && tableDocData.table?.schema_data?.columns) {
+                //                    return {
+                //                        ...table,
+                //                        columns: tableDocData.table.schema_data.columns,
+                //                        business_purpose: tableDocData.table.business_purpose,
+                //                        status: tableDocData.table.status
+                //                    };
+                //                }
+                //            }
+                //        } catch (e) {}
+                //    }
+                //    return table;
+                //}));
+                tables = tables.map(table => {
                     const doc = docMap[table.name];
                     if (doc) {
-                        try {
-                            const tableDocResponse = await fetch(`http://127.0.0.1:5000/api/documentation/tables/${table.name}`);
-                            if (tableDocResponse.ok) {
-                                const tableDocData = await tableDocResponse.json();
-                                if (tableDocData.success && tableDocData.table?.schema_data?.columns) {
-                                    return {
-                                        ...table,
-                                        columns: tableDocData.table.schema_data.columns,
-                                        business_purpose: tableDocData.table.business_purpose,
-                                        status: tableDocData.table.status
-                                    };
-                                }
-                            }
-                        } catch (e) {}
+                        return {
+                            ...table,
+                            business_purpose: doc.business_purpose || '',
+                            status: doc.status || 'completed'
+                        };
                     }
                     return table;
-                }));
+                });                
             }
         }
 
@@ -185,13 +196,20 @@ const SchemaPage = () => {
       const docResponse = await fetch(`http://127.0.0.1:5000/api/documentation/tables/${table.name}`);
       if (docResponse.ok) {
         const docData = await docResponse.json();
+        console.log('DOCDATA:', docData);
+        console.log('DOCDATA success:', docData.success);
+        console.log('DOCDATA table:', docData.table);
         if (docData.success) {
-          setSelectedTable({
-            ...table,
-            documentation: docData.documentation,
-            business_purpose: docData.business_purpose,
-            status: docData.status,
-            processed_at: docData.processed_at
+          setSelectedTable(prev => {
+              console.log('PREV columns:', prev?.columns?.length);
+              console.log('PREV before merge:', prev);
+              return {
+                  ...prev,
+                  documentation: docData.table.documentation,
+                  business_purpose: docData.table.business_purpose,
+                  status: 'completed',
+                  processed_at: null
+              };
           });
         }
       }

@@ -71,30 +71,21 @@ class PersistentDocumentationAgent(BaseAgent):
             # Generate business purpose with a simple direct LLM call
             column_names = [col['name'] for col in schema_data.get('columns', [])]
             columns_str = ', '.join(column_names[:20])  # limit to 20 columns
+
+            prompt = f"""You are a database documentation expert. Generate documentation for this database table.
+
+            Table name: {table_name}
+            Columns: {columns_str}
+
+            Provide a JSON response with exactly these fields:
+            {{
+                "business_purpose": "One clear sentence describing what this table stores and why",
+                "documentation": "2-3 sentences describing the table in detail, including key columns, relationships, and typical use cases"
+            }}
+
+            Return only valid JSON, no other text."""
             
-            prompt = f"In one sentence, what is the business purpose of a database table named '{table_name}' with columns: {columns_str}?"
-            
-            # business_purpose = self.llm_model.generate(
-            #     [{"role": "user", "content": prompt}]
-            # )
-            
-            # # Handle different return types from smolagents
-            # if hasattr(business_purpose, 'content'):
-            #     business_purpose = business_purpose.content
-            # if isinstance(business_purpose, list):
-            #     business_purpose = business_purpose[0].get('text', str(business_purpose))
-            # business_purpose = str(business_purpose).strip()
-            # import openai
-            # client = openai.OpenAI(
-            #     api_key=os.getenv("OPENAI_API_KEY"),
-            #     base_url=os.getenv("OPENAI_API_BASE")
-            # )
-            # response = client.chat.completions.create(
-            #     model=os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
-            #     messages=[{"role": "user", "content": prompt}],
-            #     max_tokens=150
-            # )
-            # business_purpose = response.choices[0].message.content.strip()     
+    
             import openai
             import time
             client = openai.OpenAI(
@@ -106,13 +97,20 @@ class PersistentDocumentationAgent(BaseAgent):
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=150
             )
-            business_purpose = response.choices[0].message.content.strip()
+            import json
+            raw = response.choices[0].message.content.strip()
+            try:
+                parsed = json.loads(raw)
+                business_purpose = parsed.get("business_purpose", raw)
+                documentation = parsed.get("documentation", business_purpose)
+            except:
+                business_purpose = raw
+                documentation = raw
             time.sleep(0.5)  # small pause between tables to avoid overwhelming Ollama       
 
             
-            documentation = f"## {table_name}\n\n{business_purpose}"
-            
-            # Save to documentation store
+            documentation = f"## {table_name}\n\n{documentation}"
+
             self.store.save_table_documentation(
                 table_name, schema_data, business_purpose, documentation
             )
@@ -125,7 +123,7 @@ class PersistentDocumentationAgent(BaseAgent):
                         "business_purpose": business_purpose,
                         "schema": schema_data,
                         "type": "table",
-                        "description": business_purpose,
+                        "description": documentation,
                         "columns": [col['name'] for col in schema_data.get('columns', [])]
                     }
                     self.indexer_agent.vector_store.add_table_document(

@@ -93,15 +93,15 @@ const ItemDetailsModal = ({
           )}
 
           {/* Documentation */}
-          {table.documentation && (
-            <div className="mb-3">
-              <h6>Documentation</h6>
-              <div className="bg-light p-3 rounded">
-                <pre className="mb-0" style={{ whiteSpace: 'pre-wrap', fontSize: '0.875rem' }}>
-                  {table.documentation}
-                </pre>
+          {table.documentation && table.documentation !== table.business_purpose && (
+              <div className="mb-3">
+                  <h6>Documentation</h6>
+                  <div className="bg-light p-3 rounded">
+                      <pre className="mb-0" style={{ whiteSpace: 'pre-wrap', fontSize: '0.875rem' }}>
+                          {table.documentation}
+                      </pre>
+                  </div>
               </div>
-            </div>
           )}
 
           {/* Statistics Cards */}
@@ -414,12 +414,7 @@ const ItemDetailsModal = ({
               ></button>
             </div>
             <div className="modal-body">
-              {selectedItem.description && (
-                <div className="mb-3">
-                  <h6>Description</h6>
-                  <p className="text-muted">{selectedItem.description}</p>
-                </div>
-              )}
+              
               
               {selectedItem.type === 'table' ? renderTableDetails() : renderRelationshipDetails()}
             </div>

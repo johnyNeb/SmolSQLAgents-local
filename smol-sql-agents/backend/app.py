@@ -37,6 +37,23 @@ SQL_AGENTS_AVAILABLE = True
 print("✅ SQL Agents package imported successfully")
 
 class ApiRoutes:
+    _vector_store_cache = None
+    _inspector_cache = None
+
+    @classmethod
+    def _get_vector_store(cls):
+        if cls._vector_store_cache is None:
+            from src.vector.store import SQLVectorStore
+            cls._vector_store_cache = SQLVectorStore()
+            cls._vector_store_cache.create_table_index()
+        return cls._vector_store_cache
+
+    @classmethod  
+    def _get_inspector(cls):
+        if cls._inspector_cache is None:
+            from src.database.inspector import DatabaseInspector
+            cls._inspector_cache = DatabaseInspector()
+        return cls._inspector_cache
     def __init__(self):
         
         self.api_bp = Blueprint('api', __name__)
@@ -70,6 +87,7 @@ class ApiRoutes:
         self.api_bp.add_url_rule('/schema', view_func=self.get_schema)
         self.api_bp.add_url_rule('/debug/objects', view_func=self.debug_objects)
         self.api_bp.add_url_rule('/debug/database', view_func=self.debug_database)
+        self.api_bp.add_url_rule('/schema/full', view_func=self.get_schema_full)
 
         # Feedback endpoints
         self.api_bp.add_url_rule('/feedback', view_func=self.submit_feedback, methods=['POST'])
@@ -705,12 +723,14 @@ class ApiRoutes:
         
         try:
             from src.vector.store import SQLVectorStore
-            vector_store = SQLVectorStore()
-            vector_store.create_table_index()
-            vector_store.create_relationship_index()
+            #vector_store = SQLVectorStore()
+            #vector_store.create_table_index()
+            vector_store = self._get_vector_store()
+            #vector_store.create_relationship_index()
             
             # Get tables from ChromaDB
             table_results = vector_store.search_tables("database table records data information", 200)
+            #table_results = vector_store.get_all_tables(500)
             table_summaries = {}
             for r in table_results:
                 content = r.get("content", {})
@@ -724,15 +744,15 @@ class ApiRoutes:
                         "documentation": content.get("description", ""),
                         "status": "completed",
                         "processed_at": None
-                    }
+                    }    
             
             # Get relationships from live database
             from src.database.inspector import DatabaseInspector
-            inspector = DatabaseInspector()
+            inspector = self._get_inspector()
             relationships = inspector.get_all_foreign_key_relationships()
             relationship_summaries = {}
             for rel in relationships:
-                rel_id = f"{rel['constrained_table']}_to_{rel['referred_table']}"
+                rel_id = f"{rel['constrained_table']}_{rel['constrained_columns']}_to_{rel['referred_table']}"
                 relationship_summaries[rel_id] = {
                     "id": f"relationship_{rel_id}",
                     "type": "relationship",
@@ -869,12 +889,14 @@ class ApiRoutes:
         """Get all table documentation from ChromaDB."""
         try:
             from src.vector.store import SQLVectorStore
-            store = SQLVectorStore()
-            store.create_table_index()
-            results = store.search_tables("database table records data information", n_results=200)
+            store = self._get_vector_store()
+            results = store.search_tables("database table records data information", 200)
+            #store = SQLVectorStore()
+            #store.create_table_index()
+            #results = store.search_tables("database table records data information", n_results=200)
             
             docs = []
-            for r in results.get("tables", []):
+            for r in results:     #.get("tables", []):
                 content = r.get("content", {})
                 docs.append({
                     "table_name": content.get("name", ""),
@@ -899,8 +921,9 @@ class ApiRoutes:
             from src.database.inspector import DatabaseInspector
             
             # Get business purpose from ChromaDB
-            store = SQLVectorStore()
-            store.create_table_index()
+            #store = SQLVectorStore()
+            #store.create_table_index()
+            store = self._get_vector_store()
             results = store.search_tables(table_name, 10)
             
             business_purpose = ""
@@ -913,7 +936,7 @@ class ApiRoutes:
                     break
             
             # Get live schema from database
-            inspector = DatabaseInspector()
+            inspector = self._get_inspector()
             live_schema = inspector.get_table_schema(table_name)
             
             return jsonify({
@@ -937,7 +960,7 @@ class ApiRoutes:
         """Get all relationship documentation from live database."""
         try:
             from src.database.inspector import DatabaseInspector
-            inspector = DatabaseInspector()
+            inspector = self._get_inspector()
             relationships = inspector.get_all_foreign_key_relationships()
             
             return jsonify({
@@ -956,12 +979,12 @@ class ApiRoutes:
         
         try:
             from src.database.inspector import DatabaseInspector
-            inspector = DatabaseInspector()
+            inspector = self._get_inspector()
             relationships = inspector.get_all_foreign_key_relationships()
             
             # relationship_id format is "constrained_table_to_referred_table"
             for rel in relationships:
-                rel_id = f"{rel['constrained_table']}_to_{rel['referred_table']}"
+                rel_id = f"{rel['constrained_table']}_{rel['constrained_columns']}_to_{rel['referred_table']}"
                 if rel_id == relationship_id:
                     elapsed = time.perf_counter() - start_time
                     return jsonify({
@@ -991,6 +1014,33 @@ class ApiRoutes:
                 "success": False,
                 "error": str(e)
             }), 500
+
+    def get_schema_full(self):
+        """Get full schema with columns for all tables in one call."""
+        try:
+            inspector = self._get_inspector()
+            table_names = inspector.get_all_table_names()
+            
+            tables = []
+            for table_name in table_names:
+                schema = inspector.get_table_schema(table_name)
+                tables.append({
+                    "name": table_name,
+                    "columns": schema.get("columns", []),
+                    "column_count": len(schema.get("columns", [])),
+                    "primary_keys": [c["name"] for c in schema.get("columns", []) if c.get("primary_key")],
+                    "foreign_keys": []
+                })
+            
+            return jsonify({
+                "success": True,
+                "tables": tables,
+                "total": len(tables)
+            })
+            
+        except Exception as e:
+            logger.error(f"Failed to get full schema: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
 
     def bad_request(self, error):
         """Handle bad request errors, with verbose logging."""
